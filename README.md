@@ -57,7 +57,8 @@ Check Level 1 against the known-correct answer for KESC_0008 (live call, uses th
 python tests/test_expected.py
 ```
 
-Offline unit tests (no API calls):
+Offline tests (no API calls; fake model client): calculations, CSV writing, JSON parsing, sanitising, cache, validation,
+failing bills, template handling, config errors, key secrecy, requirements check:
 ```
 python -m unittest discover -s tests -v
 ```
@@ -99,7 +100,8 @@ cache.py       disk cache per bill and step
 io_utils.py    CSV read/write helpers
 validate.py    final output validation
 make_zip.py    builds submission.zip
-tests/         test_expected.py (KESC_0008 check, live) and test_calc.py (offline)
+tests/         test_expected.py (KESC_0008 check, live); test_calc.py, test_robustness.py,
+               test_config_and_packaging.py (offline)
 ```
 
 Per bill the app makes 3 model calls (about 30 for 10 bills, inside the free tier):
@@ -120,7 +122,7 @@ Per bill the app makes 3 model calls (about 30 for 10 bills, inside the free tie
 - **Previous months only.** History statistics exclude the current bill month; figures that include it are labelled separately.
 - **Multi-register bills (net metering, peak/off-peak):** `previous_reading` and `current_reading` come from the main (first)
   register row; `units_consumed` is the single printed total for the bill if one exists, otherwise the units of that first register.
-- **Totals-only bills (typical for LESCO and IESCO):** when only totals are printed, `charges` and `taxes` are `[]` and
+- **Totals-only bills (typical for LESCO and IESCO):** the "Bill Charges Breakdown" block is treated as a summary. When only totals are printed, `charges` and `taxes` are `[]` and
   `total_charges` / `total_taxes` hold the printed totals. A single combined "Taxes" line is treated the same way. No line items are
   invented, and a summary line such as "Subsidies" is not turned into a charge entry.
 - **Null over guessing.** Blank, grey-boxed or unreadable values are `null`; credits (CR) and subsidies are negative;
@@ -129,6 +131,12 @@ Per bill the app makes 3 model calls (about 30 for 10 bills, inside the free tie
 - **Negative history (net metering).** Negative units are used as printed; the stats pack flags them, withholds percentages computed on
   a non-positive base, and withholds average-based estimates, so answers say so instead of presenting nonsense figures.
 - **No identifiers.** The schema has no name, address, CNIC, account, reference, consumer or meter fields, and the prompts forbid them.
+- **Repair, don't reject.** Before pydantic validation, model output is sanitised: `"1,017"` becomes 1017, `"75496CR"` becomes
+  -75496, `"N/A"` becomes null, unknown charge/tax types become `other`/`other_tax`, common date formats are converted, zero-amount
+  lines are dropped and unknown keys are discarded. One bad field therefore no longer nulls a whole bill.
+- **Identifier scrub.** Level 2 answers are scanned and CNIC-style numbers and 10+ digit runs are replaced with `[redacted]`.
+- **Robust I/O.** Image MIME type is detected from the file bytes, requests have a 120 s timeout, the cache key includes the model
+  name and prompt text, a corrupt cache file is ignored, and bill ids are matched to image files case-insensitively.
 - **Never an empty cell.** If Level 1 fails after 3 validated attempts, the full schema with `null` values is written (provider is taken
   from the file-name prefix). If Level 2 fails, a short honest fallback answer is written. A bill that fails, or whose image is missing,
   never stops the run.
@@ -146,10 +154,15 @@ Per bill the app makes 3 model calls (about 30 for 10 bills, inside the free tie
 - Questions needing a calculation that `calc.py` does not cover are answered with "the bill does not show it" rather than a guess.
 - History-table extraction relies on the model reading small tables; on messy photos a month can be missed.
 - Net-metering bills have negative units/credits, so averages are computed on the printed values and no average-based estimate is given.
-- The model runs at temperature 0, but outputs can still vary slightly between runs.
+- The model runs at temperature 0, but outputs can still vary slightly between runs (the prompts pin down the cases that varied
+  during testing, such as the IESCO summary block).
+- If every attempt for a bill fails (for example a corrupt image), that bill gets the null schema and fallback answers; the run
+  continues and the validator still checks the files.
 
 ## AI usage
 
 - **Models and APIs:** Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`) via Google AI Studio (`google-genai` SDK).
 - **AI coding tools used to write the code:** Claude (Anthropic) and OpenCode.
 - **Other services:** none.
+#   e l e c t r i c i t y - b i l l - a n a l y z e r - w t q 2 6  
+ 
